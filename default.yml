@@ -1,0 +1,275 @@
+---
+- name: Install Project dependencies
+  hosts: all
+  become: true
+  become_user: root
+  tasks:
+    - name: install apache2, curl, wget and git
+      package:
+        name:
+          - apache2
+          - git
+          - curl
+          - wget
+        state: latest
+
+    - name: Install some prerequisites
+      package:
+        name:
+          - ca-certificates
+          - apt-transport-https
+          - software-properties-common
+        state: latest
+        update_cache: yes
+
+    - name: Download Keys
+      shell: wget -O /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg
+
+    - name: Echo Keys to php
+      shell: echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/php.list
+
+    - name: Add ppa:ondrej repo
+      ignore_errors: true
+      apt_repository:
+        repo: ppa:ondrej/php
+        state: present
+        update_cache: yes
+
+    - name: Install PHP8.1 and its core dependencies
+      package:
+        name:
+          - php8.1
+          - php8.1-fpm
+          - libapache2-mod-php
+        state: present
+
+    - name: Install other php dependencies
+      package:
+        name:
+          - php8.1-zip
+          - php8.1-mysql
+          - php8.1-xml
+          - php8.1-curl
+          - php8.1-mbstring
+          - php8.1-memcache
+          - php8.1-opcache
+          - unzip
+          - php8.1-oauth
+          - php8.1-gd
+          - php8.1-yaml
+        state: present
+        update_cache: yes
+
+- name: Install and Configure MySql
+  hosts: all
+  become: true
+  become_user: root
+  tasks:
+    - name: Install MySql and dependencies
+      package:
+        name: "{{item}}"
+        state: present
+        update_cache: yes
+      loop:
+        - default-mysql-server
+        - default-mysql-client
+        - python3-mysqldb
+        - default-libmysqlclient-dev
+
+    - name: Start and Enable MySql service
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: Enable remote login
+      lineinfile:
+        path: /etc/mysql/mariadb.conf.d/50-server.cnf
+        regexp: "^bind-address"
+        line: "bind-address = 0.0.0.0"
+        backup: yes
+      notify:
+        - Restart mysql
+
+    - include_vars: var/db_setup.yml
+    - name: Creating remote Root user
+      ignore_errors: true
+      mysql_user:
+        login_user: root
+        login_password: "root"
+        name: "{{ db_user }}"
+        host_all: yes
+        password: "{{ db_pass }}"
+        priv: "*.*:ALL"
+        host: "%"
+        state: present
+
+    - include_vars: var/db_setup.yml
+      ignore_errors: true
+    - name: Creating MySql database
+      mysql_db:
+        login_user: "{{ db_user }}"
+        login_password: "{{ db_pass }}"
+        name: "{{ db_name }}"
+        state: present
+
+  handlers:
+    - name: Restart mysql
+      service:
+        name: mysql
+        state: restarted
+
+- name: Cloning the github repo
+  hosts: all
+  vars:
+    repo_url: "https://github.com/f1amy/laravel-realworld-example-app.git"
+    working_directory: "/var/www/html"
+    new_folder: "rasheedapampa"
+  become: true
+  become_user: root
+  tasks:
+    - name: Pull changes from GitHub
+      ignore_errors: true
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ working_directory }}/{{ new_folder }}"
+        clone: false
+
+    - name: Change folder ownership and permissions
+      file:
+        path: "{{ working_directory }}/{{ new_folder }}"
+        state: directory
+        recurse: yes
+        owner: www-data
+        group: www-data
+        mode: "0775"
+
+    - name: Configure .env file
+      template:
+        src: files/.env.2
+        dest: "{{ working_directory }}/{{ new_folder }}/.env.example"
+
+    - name: Rename .env file
+      shell: mv "{{ working_directory }}/{{ new_folder }}/.env.example" "{{ working_directory }}/{{ new_folder }}/.env"
+
+- name: Install Composer and move it
+  hosts: all
+  become: true
+  become_user: root
+  tasks:
+    - name: Install Composer
+      shell: curl -sS https://getcomposer.org/installer | php
+
+    - name: Move Composer
+      shell: mv composer.phar /usr/local/bin/composer
+
+    - name: Make the composer file executable
+      shell: chmod +x /usr/local/bin/composer
+
+- name: Configure Laravel App
+  hosts: all
+  vars:
+    working_directory: "/var/www/html"
+    new_folder: "rasheedapampa"
+  tasks:
+    - name: Install dependencies with composer
+      ignore_errors: true
+      become: true
+      become_user: root
+      composer:
+        command: install
+        working_dir: "{{ working_directory }}/{{ new_folder }}"
+        state: present
+
+    - name: Generate application key
+      become: true
+      command: php artisan key:generate
+      args:
+        chdir: "{{ working_directory }}/{{ new_folder }}"
+
+    - name: Configure Cache configuration
+      become: true
+      command: php artisan migrate:fresh
+      args:
+        chdir: "{{ working_directory }}/{{ new_folder }}"
+
+    - name: Run Migrations + Seeding
+      become: true
+      command: php artisan migrate --seed
+      args:
+        chdir: "{{ working_directory }}/{{ new_folder }}"
+
+- name: Configure Apache to host Laravel application
+  hosts: all
+  become: true
+  become_user: root
+  tasks:
+    - include_vars: var/apache.yml
+    - name: Set up Apache virtual Host
+      template:
+        src: files/config.2
+        dest: /etc/apache2/sites-available/{{ http_conf }}
+
+    - include_vars: var/apache.yml
+    - name: Enable Laravel application
+      shell: /usr/sbin/a2ensite {{ http_conf }}
+      notify: Reload Apache
+
+    - name: Disable default Apache site
+      shell: /usr/sbin/a2dissite 000-default.conf
+      when: disable_default
+      notify: Reload Apache
+
+    - name: Enable Laravel application
+      shell: /usr/sbin/a2enmod rewrite
+      notify: Reload Apache
+
+    - name: Put our IP address to point to our domain
+      shell: echo "178.62.7.4    rasheedapampa.me" >> /etc/hosts
+
+    - name: Install Certibot
+      ignore_errors: true
+      package:
+         name: python3-certbot-apache
+         state: present
+
+    - name: Install SSL certificate using Let's Encrypt
+      ignore_errors: true
+      shell: certbot --apache -d rasheedapampa.me -d www.rasheedapampa.me -m nwekeejioforscheller@gmail.com --agree-tos
+
+  handlers:
+    - name: Reload Apache
+      service:
+        name: apache2
+        state: reloaded
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
+
+- name: Get list of all API endpoints
+  hosts: all
+  become: true
+  become_user: root
+  vars:
+    working_directory: "/var/www/html"
+    new_folder: "rasheedapampa"
+  tasks:
+    - name: Get all API endpoints
+      command: php artisan route:list
+      args:
+        chdir: "{{ working_directory }}/{{ new_folder }}"
+      register: command_output
+
+    - debug:
+        var: command_output.stdout_lines
+
+- name: To Configure PostgresSQL
+  hosts: all
+  ignore_errors: true
+  become: true
+  become_user: root
+  tasks:
+    - name: Configure PostgresSQL 
+      script: psql.sh
