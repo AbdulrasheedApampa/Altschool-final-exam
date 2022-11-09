@@ -235,7 +235,7 @@
 
     - name: Install SSL certificate using Let's Encrypt
       ignore_errors: true
-      shell: certbot --apache -d rasheedapampa.me -d www.rasheedapampa.me -m nwekeejioforscheller@gmail.com --agree-tos
+      shell: certbot --apache -d rasheedapampa.me -d www.rasheedapampa.me -m apampaabdulrasheed16@gmail.com --agree-tos
 
   handlers:
     - name: Reload Apache
