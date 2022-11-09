@@ -4,6 +4,21 @@
   become: true
   become_user: root
   tasks:
+    - name: hostnamectl
+      shell: hostnamectl set-hostname server.rasheedapampa.me
+      shell: hostnamectl set-hostname server.rasheedapampa.me --transient
+      shell: hostnamectl set-hostname "rasheed's server" --pretty
+
+    - name: Set Timezone to Africa/Lagos
+      timezone:
+        name: Africa/Lagos
+
+    - name: Add remote ip address to /etc/hosts
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: 178.62.7.4 server.rasheedapampa.me server
+        create: yes
+
     - name: install apache2, curl, wget and git
       package:
         name:
