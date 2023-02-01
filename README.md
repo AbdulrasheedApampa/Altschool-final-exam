@@ -4,7 +4,7 @@
 
 ## **(Deploy Laravel and Set up Postgresql)**
 
-![Laravel RealWorld Example App](images/logo.png](https://github.com/AbdulrasheedApampa/Altschool-final-exam/blob/main/logo-laravel.png)
+![](https://github.com/AbdulrasheedApampa/Altschool-final-exam/blob/main/logo-laravel.png)
 
 
 
